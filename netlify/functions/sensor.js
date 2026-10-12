@@ -9,6 +9,7 @@ const headers = {
 };
 
 exports.handler = async (event) => {
+  // Trata requisições de pré-conexão (CORS preflight)
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers, body: '' };
   }
@@ -36,6 +37,7 @@ exports.handler = async (event) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
     const data = JSON.parse(event.body);
     
+    // Insere os dados recebidos na tabela 'measurements'
     const { error } = await supabase.from('measurements').insert([
       {
         sensor_id: data.sensor_id,
@@ -64,7 +66,7 @@ exports.handler = async (event) => {
     return { 
       statusCode: 400, 
       headers, 
-      body: JSON.stringify({ error: 'JSON inválido ou erro na requisição' }) 
+      body: JSON.stringify({ error: 'Erro na requisição: ' + err.message }) 
     };
   }
 };
