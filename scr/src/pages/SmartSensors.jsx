@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { supabase } from "../lib/supabase";
 import { Plus, Cpu, Zap, TrendingDown, Factory, Clock, X, Check, Building2, BarChart2, Activity, Gauge, Calendar } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
 
@@ -114,7 +115,7 @@ export default function Sensors() {
   const [isSectorModalOpen, setIsSectorModalOpen] = useState(false);
   const [selectedAnalysisEquip, setSelectedAnalysisEquip] = useState(null);
 
-  // Estado para Análise de Comparação Histórica (SQLite)
+  // Estado para Análise de Comparação Histórica
   const [comparePeriod, setComparePeriod] = useState("daily"); // 'daily', 'weekly', 'monthly'
   const [historicalData, setHistoricalData] = useState([]);
 
@@ -128,23 +129,65 @@ export default function Sensors() {
   // Formulário Setor
   const [newSectorName, setNewSectorName] = useState("");
 
-  // 📡 Polling de tempo real
+  // 📡 Escuta e atualizações em tempo real via Supabase
   useEffect(() => {
-    const fetchEsp32Data = async () => {
+    // 1. Carrega as últimas medições salvas no Supabase ao iniciar
+    const fetchInitialTelemetry = async () => {
       try {
-        const response = await fetch("http://localhost:3001/api/telemetry");
-        if (response.ok) {
-          const data = await response.json();
-          if (!data || !data.equipmentId) return;
+        const { data, error } = await supabase
+          .from("sensor_readings")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(20);
 
-          const targetId = Number(data.equipmentId);
+        if (data && data.length > 0) {
+          const historyMap = {};
+          data.reverse().forEach((row) => {
+            const eqId = Number(row.equipment_id || 1);
+            if (!historyMap[eqId]) historyMap[eqId] = [];
+            
+            const timeStr = new Date(row.created_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            });
 
+            historyMap[eqId].push({
+              time: timeStr,
+              power: row.power_kw ?? 0,
+              pf: row.pf ?? 1,
+              current: row.current ?? 0,
+            });
+          });
+
+          setTelemetryHistory((prev) => ({ ...prev, ...historyMap }));
+        }
+      } catch (err) {
+        console.error("Erro ao carregar telemetria inicial:", err);
+      }
+    };
+
+    fetchInitialTelemetry();
+
+    // 2. Inscreve no canal em tempo real para novos envios do ESP32
+    const channel = supabase
+      .channel("esp32-realtime-sensors")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "sensor_readings" },
+        (payload) => {
+          const data = payload.new;
+          if (!data) return;
+
+          const targetId = Number(data.equipment_id || 1);
+
+          // Atualiza os dados instantâneos nos cards do equipamento
           setEquipments((prev) =>
             prev.map((eq) => {
               if (eq.id === targetId) {
                 return {
                   ...eq,
-                  powerKw: data.powerKw ?? eq.powerKw,
+                  powerKw: data.power_kw ?? eq.powerKw,
                   voltage: data.voltage ?? eq.voltage,
                   current: data.current ?? eq.current,
                   pf: data.pf ?? eq.pf,
@@ -154,26 +197,32 @@ export default function Sensors() {
             })
           );
 
+          // Adiciona o novo ponto na curva de carga do gráfico
+          const timeStr = new Date(data.created_at || Date.now()).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          });
+
+          const newPoint = {
+            time: timeStr,
+            power: data.power_kw ?? 0,
+            pf: data.pf ?? 1,
+            current: data.current ?? 0,
+          };
+
           setTelemetryHistory((prev) => {
             const currentHistory = prev[targetId] || [];
-            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            
-            const newPoint = {
-              time: timeStr,
-              power: data.powerKw ?? 0,
-              pf: data.pf ?? 1,
-              current: data.current ?? 0,
-            };
-
             const updatedHistory = [...currentHistory, newPoint].slice(-10);
             return { ...prev, [targetId]: updatedHistory };
           });
 
+          // Atualiza o modal de análise se ele estiver aberto no equipamento ativo
           setSelectedAnalysisEquip((prevModal) => {
             if (prevModal && prevModal.id === targetId) {
               return {
                 ...prevModal,
-                powerKw: data.powerKw ?? prevModal.powerKw,
+                powerKw: data.power_kw ?? prevModal.powerKw,
                 voltage: data.voltage ?? prevModal.voltage,
                 current: data.current ?? prevModal.current,
                 pf: data.pf ?? prevModal.pf,
@@ -182,30 +231,34 @@ export default function Sensors() {
             return prevModal;
           });
         }
-      } catch (err) {
-        // Silencioso se backend inativo
-      }
-    };
+      )
+      .subscribe();
 
-    const interval = setInterval(fetchEsp32Data, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  // 📊 Consulta os dados históricos do SQLite ao mudar de equipamento ou período no Modal de Análise
+  // 📊 Consulta os dados históricos no Supabase/Fallback
   useEffect(() => {
     if (!selectedAnalysisEquip) return;
 
     const fetchHistoricalData = async () => {
       try {
-        const res = await fetch(`http://localhost:3001/api/analytics/compare?equipmentId=${selectedAnalysisEquip.id}&period=${comparePeriod}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.length > 0) {
-            setHistoricalData(data);
-          } else {
-            // Se o banco ainda não acumulou histórico suficiente, usa o fallback
-            setHistoricalData(mockCompareData[comparePeriod]);
-          }
+        const { data, error } = await supabase
+          .from("sensor_readings")
+          .select("*")
+          .eq("equipment_id", selectedAnalysisEquip.id)
+          .order("created_at", { ascending: true });
+
+        if (data && data.length > 0) {
+          // Formata dados obtidos para o gráfico
+          const formatted = data.map((item) => ({
+            periodLabel: new Date(item.created_at).toLocaleDateString([], { month: "short", day: "numeric" }),
+            totalEnergyKw: item.power_kw ?? 0,
+            avgPower: item.power_kw ?? 0,
+          }));
+          setHistoricalData(formatted);
         } else {
           setHistoricalData(mockCompareData[comparePeriod]);
         }
@@ -250,7 +303,7 @@ export default function Sensors() {
       dailyHours: parseFloat(dailyHours),
       status: "Ativo",
       voltage: 220,
-      current: (parseFloat(powerKw) * 1000 / 220).toFixed(1),
+      current: ((parseFloat(powerKw) * 1000) / 220).toFixed(1),
       pf: 0.92,
       thd: "3.0%",
       loadType: "Geral",
@@ -455,7 +508,7 @@ export default function Sensors() {
         </div>
       </div>
 
-      {/* MODAL DE ANÁLISE TÉCNICA E HISTÓRICA DO EQUIPAMENTO (NOVA FUNCIONALIDADE INTEGRADAS AO SQLITE) */}
+      {/* MODAL DE ANÁLISE TÉCNICA E HISTÓRICA DO EQUIPAMENTO */}
       {selectedAnalysisEquip && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl border border-slate-100 space-y-6 animate-fadeIn max-h-[90vh] overflow-y-auto">
@@ -544,18 +597,18 @@ export default function Sensors() {
               </div>
             </div>
 
-            {/* 🆕 SEÇÃO COMPARAÇÃO HISTÓRICA DO BANCO DE DADOS (SQLite) */}
+            {/* SEÇÃO COMPARAÇÃO HISTÓRICA */}
             <div className="pt-4 border-t border-slate-100">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                 <div>
                   <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
                     <Calendar className="h-4 w-4 text-[#026aa7]" />
-                    Análise e Comparação de Consumo (SQLite)
+                    Análise e Comparação de Consumo
                   </h4>
-                  <p className="text-xs text-slate-400">Dados acumulados no banco de dados</p>
+                  <p className="text-xs text-slate-400">Dados acumulados no Supabase</p>
                 </div>
 
-                {/* Seletores de Período (Diário, Semanal, Mensal) */}
+                {/* Seletores de Período */}
                 <div className="flex bg-slate-100 p-1 rounded-xl">
                   <button
                     onClick={() => setComparePeriod("daily")}
