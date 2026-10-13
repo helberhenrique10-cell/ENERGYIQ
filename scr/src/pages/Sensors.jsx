@@ -7,8 +7,8 @@ const initialSectors = ["Escritório Técnico", "Usinagem", "Processos Térmicos
 
 const initialTelemetryHistory = {
   1: [
-    { time: "08:00", power: 1.1, pf: 0.91, current: 5.2 },
-    { time: "10:00", power: 1.2, pf: 0.90, current: 5.5 },
+    { time: "08:00", power: 1.1, pf: 0.90, current: 5.4 },
+    { time: "10:00", power: 1.2, pf: 0.90, current: 5.4 },
   ],
 };
 
@@ -66,7 +66,7 @@ const initialEquipments = [
   },
 ];
 
-export default function Sensors() {
+export default function SmartSensors() {
   const [sectors, setSectors] = useState(initialSectors);
   const [equipments, setEquipments] = useState(initialEquipments);
   const [telemetryHistory, setTelemetryHistory] = useState(initialTelemetryHistory);
@@ -103,7 +103,28 @@ export default function Sensors() {
 
         if (data && data.length > 0) {
           const historyMap = {};
-          data.reverse().forEach((row) => {
+          
+          // Atualiza os valores mais recentes nos cards principais
+          const latestRow = data[0];
+          const latestTargetId = parseSensorId(latestRow.sensor_id);
+          const latestKw = latestRow.power > 50 ? latestRow.power / 1000 : latestRow.power;
+
+          setEquipments((prev) =>
+            prev.map((eq) => {
+              if (eq.id === latestTargetId) {
+                return {
+                  ...eq,
+                  powerKw: latestKw ?? eq.powerKw,
+                  voltage: latestRow.voltage ?? eq.voltage,
+                  current: latestRow.current ?? eq.current,
+                  pf: latestRow.power_factor ?? eq.pf,
+                };
+              }
+              return eq;
+            })
+          );
+
+          data.slice().reverse().forEach((row) => {
             const eqId = parseSensorId(row.sensor_id);
             if (!historyMap[eqId]) historyMap[eqId] = [];
             
@@ -113,7 +134,6 @@ export default function Sensors() {
               second: "2-digit",
             });
 
-            // Converte W para kW caso o valor seja superior a 50
             const kwVal = row.power > 50 ? row.power / 1000 : row.power;
 
             historyMap[eqId].push({
@@ -160,6 +180,19 @@ export default function Sensors() {
             })
           );
 
+          setSelectedAnalysisEquip((prevModal) => {
+            if (prevModal && prevModal.id === targetId) {
+              return {
+                ...prevModal,
+                powerKw: realKw ?? prevModal.powerKw,
+                voltage: data.voltage ?? prevModal.voltage,
+                current: data.current ?? prevModal.current,
+                pf: data.power_factor ?? prevModal.pf,
+              };
+            }
+            return prevModal;
+          });
+
           const timeStr = new Date(data.created_at || Date.now()).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -177,19 +210,6 @@ export default function Sensors() {
             const currentHistory = prev[targetId] || [];
             const updatedHistory = [...currentHistory, newPoint].slice(-10);
             return { ...prev, [targetId]: updatedHistory };
-          });
-
-          setSelectedAnalysisEquip((prevModal) => {
-            if (prevModal && prevModal.id === targetId) {
-              return {
-                ...prevModal,
-                powerKw: realKw ?? prevModal.powerKw,
-                voltage: data.voltage ?? prevModal.voltage,
-                current: data.current ?? prevModal.current,
-                pf: data.power_factor ?? prevModal.pf,
-              };
-            }
-            return prevModal;
           });
         }
       )
