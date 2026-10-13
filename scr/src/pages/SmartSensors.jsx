@@ -3,63 +3,24 @@ import { supabase } from "../lib/supabase";
 import { Plus, Cpu, Zap, TrendingDown, Factory, Clock, X, Check, Building2, BarChart2, Activity, Gauge, Calendar } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
 
-// Setores iniciais
 const initialSectors = ["Escritório Técnico", "Usinagem", "Processos Térmicos"];
 
-// Data fictícia fallback de telemetria
 const initialTelemetryHistory = {
   1: [
     { time: "08:00", power: 1.1, pf: 0.91, current: 5.2 },
     { time: "10:00", power: 1.2, pf: 0.90, current: 5.5 },
-    { time: "12:00", power: 0.8, pf: 0.88, current: 3.8 },
-    { time: "14:00", power: 1.2, pf: 0.90, current: 5.6 },
-    { time: "16:00", power: 1.15, pf: 0.89, current: 5.3 },
-    { time: "18:00", power: 0.5, pf: 0.85, current: 2.4 },
-  ],
-  2: [
-    { time: "08:00", power: 2.2, pf: 0.82, current: 12.5 },
-    { time: "10:00", power: 2.2, pf: 0.82, current: 12.4 },
-    { time: "12:00", power: 2.1, pf: 0.81, current: 12.1 },
-    { time: "14:00", power: 2.3, pf: 0.83, current: 12.8 },
-    { time: "16:00", power: 2.2, pf: 0.82, current: 12.4 },
-    { time: "18:00", power: 2.2, pf: 0.82, current: 12.5 },
-  ],
-  3: [
-    { time: "08:00", power: 4.5, pf: 0.99, current: 20.4 },
-    { time: "10:00", power: 4.5, pf: 0.99, current: 20.5 },
-    { time: "12:00", power: 4.4, pf: 0.98, current: 20.0 },
-    { time: "14:00", power: 4.5, pf: 0.99, current: 20.4 },
-    { time: "16:00", power: 4.5, pf: 0.99, current: 20.5 },
-    { time: "18:00", power: 0.0, pf: 1.00, current: 0.0 },
   ],
 };
 
-// Dados fictícios fallback de comparação para visualização caso o banco esteja limpo
 const mockCompareData = {
   daily: [
     { periodLabel: "Seg", totalEnergyKw: 12.4, avgPower: 1.1 },
     { periodLabel: "Ter", totalEnergyKw: 14.2, avgPower: 1.2 },
-    { periodLabel: "Qua", totalEnergyKw: 11.8, avgPower: 1.0 },
-    { periodLabel: "Qui", totalEnergyKw: 15.5, avgPower: 1.3 },
-    { periodLabel: "Sex", totalEnergyKw: 13.1, avgPower: 1.1 },
-    { periodLabel: "Sáb", totalEnergyKw: 8.2, avgPower: 0.7 },
-    { periodLabel: "Dom", totalEnergyKw: 4.5, avgPower: 0.4 },
   ],
-  weekly: [
-    { periodLabel: "Sem 37", totalEnergyKw: 88.5, avgPower: 1.1 },
-    { periodLabel: "Sem 38", totalEnergyKw: 92.1, avgPower: 1.2 },
-    { periodLabel: "Sem 39", totalEnergyKw: 79.4, avgPower: 1.0 },
-    { periodLabel: "Sem 40", totalEnergyKw: 95.0, avgPower: 1.3 },
-  ],
-  monthly: [
-    { periodLabel: "Jul", totalEnergyKw: 340.0, avgPower: 1.1 },
-    { periodLabel: "Ago", totalEnergyKw: 385.2, avgPower: 1.2 },
-    { periodLabel: "Set", totalEnergyKw: 362.8, avgPower: 1.1 },
-    { periodLabel: "Out", totalEnergyKw: 395.0, avgPower: 1.3 },
-  ]
+  weekly: [],
+  monthly: []
 };
 
-// Três equipamentos correspondentes
 const initialEquipments = [
   {
     id: 1,
@@ -110,38 +71,31 @@ export default function Sensors() {
   const [equipments, setEquipments] = useState(initialEquipments);
   const [telemetryHistory, setTelemetryHistory] = useState(initialTelemetryHistory);
   
-  // Modais
   const [isEquipModalOpen, setIsEquipModalOpen] = useState(false);
   const [isSectorModalOpen, setIsSectorModalOpen] = useState(false);
   const [selectedAnalysisEquip, setSelectedAnalysisEquip] = useState(null);
 
-  // Estado para Análise de Comparação Histórica
-  const [comparePeriod, setComparePeriod] = useState("daily"); // 'daily', 'weekly', 'monthly'
+  const [comparePeriod, setComparePeriod] = useState("daily");
   const [historicalData, setHistoricalData] = useState([]);
 
-  // Formulário Equipamento
   const [name, setName] = useState("");
   const [sector, setSector] = useState(initialSectors[0]);
   const [cls, setCls] = useState("A");
   const [powerKw, setPowerKw] = useState("");
   const [dailyHours, setDailyHours] = useState("");
 
-  // Formulário Setor
   const [newSectorName, setNewSectorName] = useState("");
 
-  // Helper para mapear sensor_id do Supabase para o ID do equipamento local
   const parseSensorId = (sensorId) => {
     if (sensorId === "ESP32_PZEM_01") return 1;
     const parsed = Number(sensorId);
     return isNaN(parsed) ? 1 : parsed;
   };
 
-  // 📡 Escuta e atualizações em tempo real via Supabase (Tabela measurements)
   useEffect(() => {
-    // 1. Carrega as últimas medições salvas na tabela 'measurements'
     const fetchInitialTelemetry = async () => {
       try {
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from("measurements")
           .select("*")
           .order("created_at", { ascending: false })
@@ -159,9 +113,12 @@ export default function Sensors() {
               second: "2-digit",
             });
 
+            // Converte W para kW caso o valor seja superior a 50
+            const kwVal = row.power > 50 ? row.power / 1000 : row.power;
+
             historyMap[eqId].push({
               time: timeStr,
-              power: row.power ?? 0,
+              power: kwVal ?? 0,
               pf: row.power_factor ?? 1,
               current: row.current ?? 0,
             });
@@ -170,13 +127,12 @@ export default function Sensors() {
           setTelemetryHistory((prev) => ({ ...prev, ...historyMap }));
         }
       } catch (err) {
-        console.error("Erro ao carregar telemetria inicial:", err);
+        console.error("Erro ao carregar telemetria:", err);
       }
     };
 
     fetchInitialTelemetry();
 
-    // 2. Inscreve no canal em tempo real para novos envios na tabela 'measurements'
     const channel = supabase
       .channel("esp32-realtime-measurements")
       .on(
@@ -187,14 +143,14 @@ export default function Sensors() {
           if (!data) return;
 
           const targetId = parseSensorId(data.sensor_id);
+          const realKw = data.power > 50 ? data.power / 1000 : data.power;
 
-          // Atualiza os dados instantâneos nos cards do equipamento
           setEquipments((prev) =>
             prev.map((eq) => {
               if (eq.id === targetId) {
                 return {
                   ...eq,
-                  powerKw: data.power ?? eq.powerKw,
+                  powerKw: realKw ?? eq.powerKw,
                   voltage: data.voltage ?? eq.voltage,
                   current: data.current ?? eq.current,
                   pf: data.power_factor ?? eq.pf,
@@ -204,7 +160,6 @@ export default function Sensors() {
             })
           );
 
-          // Adiciona o novo ponto no gráfico
           const timeStr = new Date(data.created_at || Date.now()).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -213,7 +168,7 @@ export default function Sensors() {
 
           const newPoint = {
             time: timeStr,
-            power: data.power ?? 0,
+            power: realKw ?? 0,
             pf: data.power_factor ?? 1,
             current: data.current ?? 0,
           };
@@ -224,12 +179,11 @@ export default function Sensors() {
             return { ...prev, [targetId]: updatedHistory };
           });
 
-          // Atualiza o modal de análise se ele estiver aberto no equipamento ativo
           setSelectedAnalysisEquip((prevModal) => {
             if (prevModal && prevModal.id === targetId) {
               return {
                 ...prevModal,
-                powerKw: data.power ?? prevModal.powerKw,
+                powerKw: realKw ?? prevModal.powerKw,
                 voltage: data.voltage ?? prevModal.voltage,
                 current: data.current ?? prevModal.current,
                 pf: data.power_factor ?? prevModal.pf,
@@ -246,7 +200,6 @@ export default function Sensors() {
     };
   }, []);
 
-  // 📊 Consulta os dados históricos no Supabase (Tabela measurements)
   useEffect(() => {
     if (!selectedAnalysisEquip) return;
 
@@ -254,7 +207,7 @@ export default function Sensors() {
       try {
         const targetSensorStr = selectedAnalysisEquip.id === 1 ? "ESP32_PZEM_01" : String(selectedAnalysisEquip.id);
 
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from("measurements")
           .select("*")
           .eq("sensor_id", targetSensorStr)
@@ -263,8 +216,8 @@ export default function Sensors() {
         if (data && data.length > 0) {
           const formatted = data.map((item) => ({
             periodLabel: new Date(item.created_at).toLocaleDateString([], { month: "short", day: "numeric" }),
-            totalEnergyKw: item.power ?? 0,
-            avgPower: item.power ?? 0,
+            totalEnergyKw: item.power > 50 ? item.power / 1000 : item.power,
+            avgPower: item.power > 50 ? item.power / 1000 : item.power,
           }));
           setHistoricalData(formatted);
         } else {
@@ -278,7 +231,6 @@ export default function Sensors() {
     fetchHistoricalData();
   }, [selectedAnalysisEquip, comparePeriod]);
 
-  // Métricas Totais
   const activeCount = equipments.filter((e) => e.status === "Ativo").length;
   const totalPower = equipments.reduce((acc, curr) => acc + curr.powerKw, 0);
 
@@ -350,7 +302,6 @@ export default function Sensors() {
 
   return (
     <div className="p-6 space-y-6 bg-slate-50/50 min-h-screen relative">
-      {/* Cabeçalho */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Sensores Inteligentes</h1>
@@ -376,7 +327,6 @@ export default function Sensors() {
         </div>
       </div>
 
-      {/* Cards de Métricas Superiores */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="p-5 bg-sky-50/30 rounded-2xl border border-sky-100 shadow-sm flex items-center justify-between">
           <div>
@@ -425,7 +375,6 @@ export default function Sensors() {
         </div>
       </div>
 
-      {/* Gráfico Comparativo por Setor */}
       <div className="p-6 bg-white rounded-2xl border border-slate-100 shadow-sm">
         <h2 className="text-base font-bold text-slate-900">Comparativo por Setor</h2>
         <p className="text-xs text-slate-500 mb-6">Consumo mensal estimado por setor (kWh)</p>
@@ -443,7 +392,6 @@ export default function Sensors() {
         </div>
       </div>
 
-      {/* Grid dos Equipamentos */}
       <div>
         <h2 className="text-lg font-bold text-slate-900 mb-4">Equipamentos</h2>
 
@@ -516,12 +464,10 @@ export default function Sensors() {
         </div>
       </div>
 
-      {/* MODAL DE ANÁLISE TÉCNICA E HISTÓRICA DO EQUIPAMENTO */}
       {selectedAnalysisEquip && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl border border-slate-100 space-y-6 animate-fadeIn max-h-[90vh] overflow-y-auto">
             
-            {/* Header do Modal */}
             <div className="flex justify-between items-start border-b border-slate-100 pb-4">
               <div>
                 <div className="flex items-center gap-2">
@@ -542,7 +488,6 @@ export default function Sensors() {
               </button>
             </div>
 
-            {/* Grid de Cards Telemétricos */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
                 <p className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
@@ -581,7 +526,6 @@ export default function Sensors() {
               </div>
             </div>
 
-            {/* Gráfico de Consumo Temporal (Tempo Real) */}
             <div>
               <h4 className="text-sm font-bold text-slate-800 mb-1">Curva de Carga em Tempo Real</h4>
               <p className="text-xs text-slate-400 mb-4">Variação instantânea enviada pelo ESP32</p>
@@ -605,7 +549,6 @@ export default function Sensors() {
               </div>
             </div>
 
-            {/* SEÇÃO COMPARAÇÃO HISTÓRICA */}
             <div className="pt-4 border-t border-slate-100">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                 <div>
@@ -616,7 +559,6 @@ export default function Sensors() {
                   <p className="text-xs text-slate-400">Dados acumulados no Supabase</p>
                 </div>
 
-                {/* Seletores de Período */}
                 <div className="flex bg-slate-100 p-1 rounded-xl">
                   <button
                     onClick={() => setComparePeriod("daily")}
@@ -659,7 +601,6 @@ export default function Sensors() {
               </div>
             </div>
 
-            {/* Dica do Engenheiro */}
             <div className="p-4 bg-sky-50/50 rounded-xl border border-sky-100 text-xs text-slate-600 space-y-1">
               <p className="font-semibold text-sky-900">Análise do Perfil Elétrico:</p>
               {selectedAnalysisEquip.pf < 0.92 ? (
@@ -685,7 +626,6 @@ export default function Sensors() {
         </div>
       )}
 
-      {/* Modal Novo Equipamento */}
       {isEquipModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100 space-y-5 animate-fadeIn">
@@ -797,7 +737,6 @@ export default function Sensors() {
         </div>
       )}
 
-      {/* Modal Novo Setor */}
       {isSectorModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl border border-slate-100 space-y-5 animate-fadeIn">
