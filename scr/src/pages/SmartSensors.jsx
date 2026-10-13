@@ -88,11 +88,14 @@ export default function SmartSensors() {
 
   const parseSensorId = (sensorId) => {
     if (sensorId === "ESP32_PZEM_01") return 1;
+    if (sensorId === "ESP32_PZEM_02") return 2;
+    if (sensorId === "ESP32_PZEM_03") return 3;
     const parsed = Number(sensorId);
     return isNaN(parsed) ? 1 : parsed;
   };
 
   useEffect(() => {
+    // 1. Busca os últimos dados ao carregar a página
     const fetchInitialTelemetry = async () => {
       try {
         const { data } = await supabase
@@ -104,7 +107,6 @@ export default function SmartSensors() {
         if (data && data.length > 0) {
           const historyMap = {};
           
-          // Atualiza os valores mais recentes nos cards principais
           const latestRow = data[0];
           const latestTargetId = parseSensorId(latestRow.sensor_id);
           const latestKw = latestRow.power > 50 ? latestRow.power / 1000 : latestRow.power;
@@ -153,6 +155,7 @@ export default function SmartSensors() {
 
     fetchInitialTelemetry();
 
+    // 2. Escuta novos INSERTs do Supabase em tempo real
     const channel = supabase
       .channel("esp32-realtime-measurements")
       .on(
@@ -165,6 +168,7 @@ export default function SmartSensors() {
           const targetId = parseSensorId(data.sensor_id);
           const realKw = data.power > 50 ? data.power / 1000 : data.power;
 
+          // Atualiza lista principal
           setEquipments((prev) =>
             prev.map((eq) => {
               if (eq.id === targetId) {
@@ -180,6 +184,7 @@ export default function SmartSensors() {
             })
           );
 
+          // Atualiza o modal aberto instantaneamente
           setSelectedAnalysisEquip((prevModal) => {
             if (prevModal && prevModal.id === targetId) {
               return {
