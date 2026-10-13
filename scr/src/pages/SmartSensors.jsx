@@ -129,13 +129,20 @@ export default function Sensors() {
   // Formulário Setor
   const [newSectorName, setNewSectorName] = useState("");
 
-  // 📡 Escuta e atualizações em tempo real via Supabase
+  // Helper para mapear sensor_id do Supabase para o ID do equipamento local
+  const parseSensorId = (sensorId) => {
+    if (sensorId === "ESP32_PZEM_01") return 1;
+    const parsed = Number(sensorId);
+    return isNaN(parsed) ? 1 : parsed;
+  };
+
+  // 📡 Escuta e atualizações em tempo real via Supabase (Tabela measurements)
   useEffect(() => {
-    // 1. Carrega as últimas medições salvas no Supabase ao iniciar
+    // 1. Carrega as últimas medições salvas na tabela 'measurements'
     const fetchInitialTelemetry = async () => {
       try {
         const { data, error } = await supabase
-          .from("sensor_readings")
+          .from("measurements")
           .select("*")
           .order("created_at", { ascending: false })
           .limit(20);
@@ -143,7 +150,7 @@ export default function Sensors() {
         if (data && data.length > 0) {
           const historyMap = {};
           data.reverse().forEach((row) => {
-            const eqId = Number(row.equipment_id || 1);
+            const eqId = parseSensorId(row.sensor_id);
             if (!historyMap[eqId]) historyMap[eqId] = [];
             
             const timeStr = new Date(row.created_at).toLocaleTimeString([], {
@@ -154,8 +161,8 @@ export default function Sensors() {
 
             historyMap[eqId].push({
               time: timeStr,
-              power: row.power_kw ?? 0,
-              pf: row.pf ?? 1,
+              power: row.power ?? 0,
+              pf: row.power_factor ?? 1,
               current: row.current ?? 0,
             });
           });
@@ -169,17 +176,17 @@ export default function Sensors() {
 
     fetchInitialTelemetry();
 
-    // 2. Inscreve no canal em tempo real para novos envios do ESP32
+    // 2. Inscreve no canal em tempo real para novos envios na tabela 'measurements'
     const channel = supabase
-      .channel("esp32-realtime-sensors")
+      .channel("esp32-realtime-measurements")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "sensor_readings" },
+        { event: "INSERT", schema: "public", table: "measurements" },
         (payload) => {
           const data = payload.new;
           if (!data) return;
 
-          const targetId = Number(data.equipment_id || 1);
+          const targetId = parseSensorId(data.sensor_id);
 
           // Atualiza os dados instantâneos nos cards do equipamento
           setEquipments((prev) =>
@@ -187,17 +194,17 @@ export default function Sensors() {
               if (eq.id === targetId) {
                 return {
                   ...eq,
-                  powerKw: data.power_kw ?? eq.powerKw,
+                  powerKw: data.power ?? eq.powerKw,
                   voltage: data.voltage ?? eq.voltage,
                   current: data.current ?? eq.current,
-                  pf: data.pf ?? eq.pf,
+                  pf: data.power_factor ?? eq.pf,
                 };
               }
               return eq;
             })
           );
 
-          // Adiciona o novo ponto na curva de carga do gráfico
+          // Adiciona o novo ponto no gráfico
           const timeStr = new Date(data.created_at || Date.now()).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -206,8 +213,8 @@ export default function Sensors() {
 
           const newPoint = {
             time: timeStr,
-            power: data.power_kw ?? 0,
-            pf: data.pf ?? 1,
+            power: data.power ?? 0,
+            pf: data.power_factor ?? 1,
             current: data.current ?? 0,
           };
 
@@ -222,10 +229,10 @@ export default function Sensors() {
             if (prevModal && prevModal.id === targetId) {
               return {
                 ...prevModal,
-                powerKw: data.power_kw ?? prevModal.powerKw,
+                powerKw: data.power ?? prevModal.powerKw,
                 voltage: data.voltage ?? prevModal.voltage,
                 current: data.current ?? prevModal.current,
-                pf: data.pf ?? prevModal.pf,
+                pf: data.power_factor ?? prevModal.pf,
               };
             }
             return prevModal;
@@ -239,24 +246,25 @@ export default function Sensors() {
     };
   }, []);
 
-  // 📊 Consulta os dados históricos no Supabase/Fallback
+  // 📊 Consulta os dados históricos no Supabase (Tabela measurements)
   useEffect(() => {
     if (!selectedAnalysisEquip) return;
 
     const fetchHistoricalData = async () => {
       try {
+        const targetSensorStr = selectedAnalysisEquip.id === 1 ? "ESP32_PZEM_01" : String(selectedAnalysisEquip.id);
+
         const { data, error } = await supabase
-          .from("sensor_readings")
+          .from("measurements")
           .select("*")
-          .eq("equipment_id", selectedAnalysisEquip.id)
+          .eq("sensor_id", targetSensorStr)
           .order("created_at", { ascending: true });
 
         if (data && data.length > 0) {
-          // Formata dados obtidos para o gráfico
           const formatted = data.map((item) => ({
             periodLabel: new Date(item.created_at).toLocaleDateString([], { month: "short", day: "numeric" }),
-            totalEnergyKw: item.power_kw ?? 0,
-            avgPower: item.power_kw ?? 0,
+            totalEnergyKw: item.power ?? 0,
+            avgPower: item.power ?? 0,
           }));
           setHistoricalData(formatted);
         } else {
